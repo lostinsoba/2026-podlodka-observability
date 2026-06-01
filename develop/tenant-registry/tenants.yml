@@ -1,0 +1,5 @@
+tenants:
+  - tenant_id: alice
+    tenant_max_batch_size: 100
+  - tenant_id: bob
+    tenant_max_batch_size: 200

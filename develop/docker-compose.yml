@@ -1,0 +1,169 @@
+version: "3"
+networks:
+  store:
+    driver: bridge
+services:
+  ## user entrypoint
+  nginx:
+    image: nginx:1.24.0-alpine
+    restart: on-failure
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - store
+    ports:
+      - "8888:8080"
+    depends_on:
+      - store-api
+  ## core services
+  store-api:
+    image: ${STORE_IMAGE}
+    restart: on-failure
+    entrypoint: ./store/api
+    environment:
+      DB_CONN_STR: "postgres://store-user:store-user-password@postgres:5432/store?sslmode=disable"
+      TENANT_REGISTRY_ENDPOINT: "http://tenant-registry:8080"
+      TRACE_EXPORT_ENDPOINT: "tempo:4318"
+      LOG_LEVEL: debug
+    networks:
+      - store
+    ports:
+      - "8080:8080"
+      - "10000:10000"
+    depends_on:
+      - tenant-registry
+  store-receiver:
+    image: ${STORE_IMAGE}
+    restart: on-failure
+    entrypoint: ./store/receiver
+    environment:
+      DB_CONN_STR: "postgres://store-user:store-user-password@postgres:5432/store?sslmode=disable"
+      TENANT_REGISTRY_ENDPOINT: "http://tenant-registry:8080"
+      RECEIVER_BATCH_SIZE: 50
+      RECEIVER_QUEUE_CAPACITY: 1000
+      LOG_LEVEL: debug
+    networks:
+      - store
+    ports:
+      - "8081:8080"
+      - "10001:10000"
+    depends_on:
+      - tenant-registry
+  sender:
+    image: ${SENDER_IMAGE}
+    restart: on-failure
+    environment:
+      SEND_ENDPOINT: "http://store-receiver:8080"
+      TENANT_REGISTRY_ENDPOINT: "http://tenant-registry:8080"
+      LOG_LEVEL: debug
+    networks:
+      - store
+    ports:
+      - "10002:10000"
+    depends_on:
+      - tenant-registry
+  querier:
+    image: ${QUERIER_IMAGE}
+    restart: on-failure
+    environment:
+      QUERY_ENDPOINT: "http://store-api:8080"
+      TENANT_REGISTRY_ENDPOINT: "http://tenant-registry:8080"
+      LOG_LEVEL: debug
+    networks:
+      - store
+    ports:
+      - "10003:10000"
+    depends_on:
+      - tenant-registry
+  ## external infrastructure
+  tenant-registry:
+    image: ${TENANT_REGISTRY_IMAGE}
+    restart: on-failure
+    environment:
+      LOG_LEVEL: debug
+    volumes:
+      - ./tenant-registry/:/etc/tenant-registry/
+    networks:
+      - store
+    ports:
+      - "8082:8080"
+      - "10004:10000"
+  ## infrastructure
+  postgres-migration:
+    image: migrate/migrate:v4.17.0
+    restart: on-failure
+    command:
+      - "-path"
+      - "/migration/"
+      - "-database"
+      - "postgres://store-user:store-user-password@postgres:5432/store?sslmode=disable&x-migrations-table=store_schema_migrations"
+      - "up"
+    volumes:
+      - ./postgres/:/migration/
+    networks:
+      - store
+    depends_on:
+      - postgres
+  postgres:
+    image: postgres:18.3
+    environment:
+      POSTGRES_USER: store-user
+      POSTGRES_PASSWORD: store-user-password
+      POSTGRES_DB: store
+    networks:
+      - store
+    ports:
+      - "5432:5432"
+  grafana:
+    image: grafana/grafana-oss:10.0.3-ubuntu
+    restart: on-failure
+    volumes:
+      - ./grafana/provisioning/:/etc/grafana/provisioning/
+      - ./grafana/store-metrics.json:/var/lib/grafana/dashboards/store/store-metrics.json
+      - ./grafana/store-logs.json:/var/lib/grafana/dashboards/store/store-logs.json
+      - ./grafana/store-traces.json:/var/lib/grafana/dashboards/store/store-traces.json
+    networks:
+      - store
+    ports:
+      - "3000:3000"
+  prometheus:
+    image: prom/prometheus:v2.46.0
+    restart: on-failure
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - store
+    ports:
+      - "9090:9090"
+  promtail:
+    image: grafana/promtail:3.5.1
+    restart: on-failure
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./promtail/config.yml:/etc/promtail/config.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - store
+    depends_on:
+      - loki
+  loki:
+    image: grafana/loki:3.5.1
+    command: -config.file=/etc/loki/config.yml
+    volumes:
+      - ./loki/config.yml:/etc/loki/config.yml
+    networks:
+      - store
+    ports:
+      - "3100:3100"
+  tempo:
+    image: grafana/tempo:2.10.0
+    command:
+      - "-config.file=/etc/tempo/config.yml"
+    volumes:
+      - ./tempo/config.yml:/etc/tempo/config.yml
+    networks:
+      - store
+    ports:
+      - "3200:3200"
+      - "4318:4318"

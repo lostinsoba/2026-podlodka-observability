@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 30s
+scrape_configs:
+  - job_name: store-api
+    static_configs:
+      - targets: [ "store-api:10000" ]
+  - job_name: store-receiver
+    static_configs:
+      - targets: [ "store-receiver:10000" ]
+  - job_name: sender
+    static_configs:
+      - targets: [ "sender:10000" ]
+  - job_name: querier
+    static_configs:
+      - targets: [ "querier:10000" ]
