@@ -4,7 +4,7 @@ create table if not exists store_message
     tenant_id     text   not null,
     external_id   text   not null,
     message       text   not null,
-    timestamp     text   not null,
+    timestamp     bigint not null,
     constraint store_message_unique unique (tenant_id, external_id)
 );
 
